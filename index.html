@@ -70,6 +70,16 @@ button:hover{transform:translateY(-1px);border-color:var(--nhan);color:var(--nha
 @keyframes bung{to{transform:scale(1.4);opacity:0}}
 .loi_qua{margin-top:28px;font-family:var(--chu_mo);font-style:var(--kieu_mo);font-size:22px;color:var(--muc);text-align:center;padding:0 24px;text-wrap:balance}
 .goi_y{margin-top:10px;font-size:12px;color:var(--nhat);letter-spacing:.2em}
+#hop_qr{position:fixed;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;padding:16px;
+  background:color-mix(in srgb,var(--muc) 45%,transparent);backdrop-filter:blur(6px);opacity:0;visibility:hidden;transition:opacity .4s,visibility .4s}
+#hop_qr.hien{opacity:1;visibility:visible}
+.qr_the{background:var(--the);border:1px solid var(--vien);border-radius:22px;padding:34px 30px 26px;text-align:center;max-width:420px;width:100%;
+  box-shadow:0 30px 80px -30px rgba(0,0,0,.5);transform:translateY(16px) scale(.97);transition:transform .45s cubic-bezier(.2,.7,.2,1)}
+#hop_qr.hien .qr_the{transform:none}
+.qr_tieu_de{font-family:var(--chu_mo);font-style:var(--kieu_mo);font-size:22px;color:var(--muc);text-wrap:balance}
+#qr_anh{display:block;margin:22px auto 16px;width:min(300px,100%);height:auto;image-rendering:pixelated;background:#fff;padding:14px;border-radius:14px}
+.qr_huong_dan{font-size:13px;color:var(--nhat);line-height:1.6;text-wrap:balance}
+#qr_bao{min-height:18px;margin-top:10px;font-size:13px;color:var(--nhan)}
 @media (max-width:560px){
   #khung{padding-top:40px}
   .the,.bc-thu .the,.bc-khung .the,.bc-buu_thiep .the{padding:38px 24px 28px}
@@ -96,6 +106,16 @@ button:hover{transform:translateY(-1px);border-color:var(--nhan);color:var(--nha
   <svg id="hoa_tiet" preserveAspectRatio="xMidYMid slice"></svg>
   <div class="ngay" id="ngay"></div>
   <div id="noi_the"></div>
+</div>
+
+<div id="hop_qr" aria-modal="true">
+  <div class="qr_the">
+    <div class="qr_tieu_de">Một món quà nhỏ dành cho bạn</div>
+    <img id="qr_anh" alt="Mã QR món quà">
+    <div class="qr_huong_dan">Bạn bè quét mã bằng camera điện thoại là mở được hộp quà</div>
+    <div class="phu"><button id="qr_chep">Chép link</button><button id="qr_luu">Lưu thiệp QR</button><button id="qr_dong">Đóng</button></div>
+    <div id="qr_bao"></div>
+  </div>
 </div>
 
 <script>
@@ -233,7 +253,6 @@ function kieuMoi(){
 let dangHien=null;  // {t, kieu, loiDan} dang tren man hinh -> dung de goi qua
 function veThe(t,kieu,loiDan){
   apKieu(kieu);dangHien={t,kieu,loiDan};
-  const nguon=(t["Nguồn"]||"").replace(/\s*\(.*\)\s*$/,"");
   document.getElementById("noi_the").innerHTML=`<div class="the dong_vao">
     ${loiDan?`<div class="loi_dan">${e(loiDan)}</div>`:""}
     <div class="ngoac">“</div>
@@ -241,17 +260,49 @@ function veThe(t,kieu,loiDan){
     <div class="hoa_van">${HOA_VAN[kieu.hv]}</div>
     <p class="doan">${e(t["Đoạn văn"])}</p>
     ${t["Gợi mở"]?`<p class="goi_mo">${e(t["Gợi mở"])}</p>`:""}
-    <div class="ky">Gợi từ <i>${e(t.sach)}</i> · ${e(t.tac_gia)}${nguon?`<br><span>${e(nguon)}</span>`:""}</div>
   </div>`;
 }
 
-// ---- goi qua: noi dung + dien mao nen vao duong link (#qua=...), trang cong khai khong can kho du lieu ----
-function maHoa(o){const b=new TextEncoder().encode(JSON.stringify(o));let s="";b.forEach(x=>s+=String.fromCharCode(x));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}
-function giaiMa(s){s=s.replace(/-/g,"+").replace(/_/g,"/");const b=atob(s);return JSON.parse(new TextDecoder().decode(Uint8Array.from(b,c=>c.charCodeAt(0))))}
-function linkQua(){
+// ---- goi qua: noi dung + dien mao nen vao duong link, trang cong khai khong can kho du lieu ----
+// #q=  : JSON nen deflate-raw (link ngan, vua ma QR).  #qua= : JSON khong nen (link cu, van doc duoc)
+const b64u=b=>{let s="";b.forEach(x=>s+=String.fromCharCode(x));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")};
+const tuB64u=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")),c=>c.charCodeAt(0));
+async function quaLuong(bytes,luong){return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(luong)).arrayBuffer())}
+async function maHoa(o){return b64u(await quaLuong(new TextEncoder().encode(JSON.stringify(o)),new CompressionStream("deflate-raw")))}
+async function giaiMa(s){return JSON.parse(new TextDecoder().decode(await quaLuong(tuB64u(s),new DecompressionStream("deflate-raw"))))}
+async function linkQua(){
   const t=dangHien.t;
-  const goi={t:{"Câu mở":t["Câu mở"],"Đoạn văn":t["Đoạn văn"],"Gợi mở":t["Gợi mở"]||"",sach:t.sach,tac_gia:t.tac_gia,"Nguồn":t["Nguồn"]||""},k:dangHien.kieu};
-  return TRANG_CONG_KHAI+"#qua="+maHoa(goi);
+  const goi={t:{"Câu mở":t["Câu mở"],"Đoạn văn":t["Đoạn văn"],"Gợi mở":t["Gợi mở"]||""},k:dangHien.kieu};
+  return TRANG_CONG_KHAI+"#q="+await maHoa(goi);
+}
+
+// ---- ma QR: hien tren man hinh de quet, hoac luu thanh tam thiep PNG ----
+function anhQR(link){
+  if(!window.qrcode)return null;
+  for(const muc of ["M","L"]){try{const q=qrcode(0,muc);q.addData(link);q.make();return q}catch(_){}}
+  return null;
+}
+async function moQR(){
+  const link=await linkQua(),q=anhQR(link),hop=document.getElementById("hop_qr");
+  if(!q){document.getElementById("bao").textContent="Cần mạng để tạo mã QR.";return}
+  const n=q.getModuleCount(),o=Math.max(4,Math.floor(320/(n+8)));
+  document.getElementById("qr_anh").src=q.createDataURL(o,o*4);
+  hop.dataset.link=link;hop.classList.add("hien");
+}
+async function luuThiepQR(){
+  const link=document.getElementById("hop_qr").dataset.link,q=anhQR(link);if(!q)return;
+  const m=MAU[dangHien.kieu.mau],W=1080,H=1440,c=document.createElement("canvas");c.width=W;c.height=H;
+  const g=c.getContext("2d"),nen=g.createLinearGradient(0,0,W,H);m.dai.forEach((x,i)=>nen.addColorStop(i/(m.dai.length-1),x));
+  g.fillStyle=nen;g.fillRect(0,0,W,H);
+  const n=q.getModuleCount(),o=Math.floor(640/n),kt=o*n,x0=(W-kt)/2,y0=380;
+  g.fillStyle="#fff";g.beginPath();g.roundRect(x0-56,y0-56,kt+112,kt+112,36);g.fill();
+  g.fillStyle="#111";for(let r=0;r<n;r++)for(let k=0;k<n;k++)if(q.isDark(r,k))g.fillRect(x0+k*o,y0+r*o,o,o);
+  await document.fonts.ready;
+  const f=CHU[dangHien.kieu.chu];g.fillStyle=m.muc;g.textAlign="center";
+  g.font=`${f.k==="italic"?"italic ":""}${Math.round(f.co*2.2)}px "${f.mo}",Georgia,serif`;g.fillText("Một món quà nhỏ dành cho bạn",W/2,230);
+  g.font=`32px "${f.than}",Georgia,serif`;g.fillStyle=m.nhat;g.fillText("Quét mã bằng camera điện thoại để mở",W/2,y0+kt+150);
+  g.fillStyle=m.nhan;g.font="54px Georgia,serif";g.fillText("❦",W/2,y0+kt+250);
+  const a=document.createElement("a");a.download=`qua_qr_${new Date().toISOString().slice(0,10)}.png`;a.href=c.toDataURL("image/png");a.click();
 }
 
 function bocTheo(k){
@@ -276,7 +327,11 @@ function dungDieuKhien(khach){
       document.getElementById("nut").appendChild(b)}
     document.getElementById("doi_nen").onclick=()=>veThe(dangHien.t,kieuMoi(),dangHien.loiDan);
     const g=document.getElementById("gui_tang");
-    if(g)g.onclick=async()=>{const l=linkQua();try{await navigator.clipboard.writeText(l);bao("Đã chép đường link món quà, dán vào Zalo hay tin nhắn để gửi.")}catch(_){prompt("Chép đường link này:",l)}};
+    if(g)g.onclick=moQR;
+    document.getElementById("qr_chep").onclick=async()=>{const l=document.getElementById("hop_qr").dataset.link;
+      try{await navigator.clipboard.writeText(l);document.getElementById("qr_bao").textContent="Đã chép đường link, dán vào Zalo hay tin nhắn để gửi."}catch(_){prompt("Chép đường link này:",l)}};
+    document.getElementById("qr_luu").onclick=luuThiepQR;
+    document.getElementById("qr_dong").onclick=()=>{document.getElementById("hop_qr").classList.remove("hien");document.getElementById("qr_bao").textContent=""};
   }
   document.getElementById("luu_anh").onclick=async()=>{
     if(!window.html2canvas){bao("Cần mạng để lưu ảnh, hoặc dùng Win+Shift+S.");return}
@@ -288,20 +343,26 @@ function dungDieuKhien(khach){
 }
 
 // ---- khoi dong ----
-const khach=location.hash.startsWith("#qua=");
-if(khach){
-  try{const g=giaiMa(location.hash.slice(5));veThe(g.t,g.k);}
-  catch(_){document.getElementById("noi_the").innerHTML=`<div class="the"><p class="cau_mo">Đường link món quà bị thiếu, nhờ người gửi chép lại giúp nhé.</p></div>`}
-  document.getElementById("ngay").textContent="Một món quà nhỏ";
-  document.getElementById("loi_qua").textContent=LOI_QUA_KHACH[batTuDo(LOI_QUA_KHACH.length)];
-}else{
-  veThe(THE.find(t=>t.ma===CHON),kieuMoi());
-  document.getElementById("loi_qua").textContent=LOI_QUA[batTuDo(LOI_QUA.length)];
-}
-dungDieuKhien(khach);
+const khach=/^#(q|qua)=/.test(location.hash);
+(async()=>{
+  if(khach){
+    try{
+      const g=location.hash.startsWith("#q=")?await giaiMa(location.hash.slice(3))
+        :JSON.parse(new TextDecoder().decode(tuB64u(location.hash.slice(5))));
+      veThe(g.t,g.k);
+    }catch(_){document.getElementById("noi_the").innerHTML=`<div class="the"><p class="cau_mo">Đường link món quà bị thiếu, nhờ người gửi chép lại giúp nhé.</p></div>`}
+    document.getElementById("ngay").textContent="Một món quà nhỏ";
+    document.getElementById("loi_qua").textContent=LOI_QUA_KHACH[batTuDo(LOI_QUA_KHACH.length)];
+  }else{
+    veThe(THE.find(t=>t.ma===CHON),kieuMoi());
+    document.getElementById("loi_qua").textContent=LOI_QUA[batTuDo(LOI_QUA.length)];
+  }
+  dungDieuKhien(khach);
+})();
 document.getElementById("qua").onclick=function(){this.classList.add("mo");
-  const the=document.querySelector(".the");the.classList.remove("dong_vao");void the.offsetWidth;the.classList.add("dong_vao")};
+  const the=document.querySelector(".the");if(!the)return;the.classList.remove("dong_vao");void the.offsetWidth;the.classList.add("dong_vao")};
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js" async></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" async></script>
 </body>
 </html>
